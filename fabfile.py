@@ -12,7 +12,7 @@ def spawn(filename):
     droplet = digitalocean.Droplet(
         token=token,
         name="Image2mbtiles-{}".format(rid),
-        region="ams1",
+        region="ams3",
         image="ubuntu-14-04-x64",
         size_slug="8gb",
         ssh_keys=[fingerprint],
