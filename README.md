@@ -7,7 +7,7 @@ mobiles for example.
 
 ## Requirements
 
-- Pillow >= 1.8
+- Pillow >= 2.8
 
 ## Usage
 
