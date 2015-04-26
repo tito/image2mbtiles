@@ -51,9 +51,11 @@ In order to spawn a droplet, you need to give 2 informations:
 - the SSH fingerprint of your computer: you need first to upload your SSH key
   to Digitalocean, and get the fingerprint here. It need to be exported into
   `DO_FINGERPRINT`
-- the Digitalocean API Token: create one and export it into `DO_TOKEN`
+- the Digitalocean API Token: create one and export it into `DO_TOKEN`:
+
 
 	$ DO_FINGERPRINT=XX:XX:XX:XX:XX... DO_TOKEN=8765367828... fab spawn:~/Downloads/IMAG0412.png
+
 
 The result will saved into output.mbtiles on your local computer. Any existing
 result will be replaced.
