@@ -16,7 +16,8 @@ MAX_LONGITUDE = 180.
 DEBUG_TILES = False
 
 
-def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles):
+def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles,
+                 tilesdir):
     w, h = im.size
     step = tile_size * (2**zoom)
     max_h = tile_size * (2**max_zoom)
@@ -53,6 +54,18 @@ def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles):
             c.execute("INSERT INTO tiles VALUES (?, ?, ?, ?)",
                       [max_zoom - zoom, ix, iy, buffer(sio.getvalue())])
             counter += 1
+
+            if tilesdir is not None:
+                current_zoom = max_zoom - zoom
+                filename = join(tilesdir,
+                                str(current_zoom),
+                                str(ix),
+                                "{}.png".format(flip_y(iy, current_zoom)))
+                directory = dirname(filename)
+                if not exists(directory):
+                    makedirs(directory)
+                im2.save(filename, format="PNG")
+
     return counter
 
 
@@ -64,7 +77,7 @@ def _estimate_tiles(w, h, max_zoom, tile_size):
     return count
 
 
-def export(source, dest, tile_size=256):
+def export(source, dest, tilesdir, tile_size=256):
     print("Analyse: {}".format(source))
     im = Image.open(source)
     w, h = im.size
@@ -102,8 +115,15 @@ def export(source, dest, tile_size=256):
     c.execute("INSERT INTO metadata VALUES ('projection', 'xy')")
 
     for zoom in range(max_zoom, -1, -1):
-        counter = export_level(c, im, max_zoom, zoom, tile_size, counter,
-                               max_tiles)
+        counter = export_level(
+            c,
+            im,
+            max_zoom,
+            zoom,
+            tile_size,
+            counter,
+            max_tiles,
+            tilesdir=tilesdir)
         conn.commit()
     conn.close()
 
@@ -168,10 +188,16 @@ def get_col_count(zoom):
 
 
 def flip_y(y, z):
-    return 2 ** z - 1 - y
+    return 2**z - 1 - y
 
 
-def export_lnglat(source, dest, center, meterswidth, rotation, tilesdir, tile_size=256):
+def export_lnglat(source,
+                  dest,
+                  center,
+                  meterswidth,
+                  rotation,
+                  tilesdir,
+                  tile_size=256):
     lng, lat = map(float, center.split(","))
     print("Analyse: {}".format(source))
     im = Image.open(source)
@@ -303,7 +329,10 @@ def export_lnglat(source, dest, center, meterswidth, rotation, tilesdir, tile_si
                 conn.commit()
 
                 if tilesdir is not None:
-                    filename = join(tilesdir, str(zoom), str(tile_col), "{}.png".format(flip_y(tile_row, zoom)))
+                    filename = join(tilesdir,
+                                    str(zoom),
+                                    str(tile_col),
+                                    "{}.png".format(flip_y(tile_row, zoom)))
                     directory = dirname(filename)
                     if not exists(directory):
                         makedirs(directory)
@@ -352,7 +381,7 @@ def main():
             rotation=args.rotation,
             tilesdir=args.tilesdir)
     else:
-        export(args.image, args.mbtiles)
+        export(args.image, args.mbtiles, tilesdir=args.tilesdir)
 
 
 if __name__ == "__main__":
