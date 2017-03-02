@@ -1,15 +1,25 @@
+# coding=utf-8
+
 import argparse
-from PIL import Image
-from math import log, ceil, floor
+import sys
+from PIL import Image, ImageDraw, ImageFont
+from math import log, ceil, cos, pi, tan, atan, exp, floor
 from StringIO import StringIO
+from os.path import join, dirname, exists
+from os import makedirs
 import sqlite3
-Image.MAX_IMAGE_PIXELS = None
+
+MIN_LATITUDE = -90.
+MAX_LATITUDE = 90.
+MIN_LONGITUDE = -180.
+MAX_LONGITUDE = 180.
+DEBUG_TILES = False
 
 
 def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles):
     w, h = im.size
-    step = tile_size * (2 ** zoom)
-    max_h = tile_size * (2 ** max_zoom)
+    step = tile_size * (2**zoom)
+    max_h = tile_size * (2**max_zoom)
     y_offset = max_h - h
     print("-> Y offset: {}".format(y_offset))
 
@@ -49,7 +59,7 @@ def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles):
 def _estimate_tiles(w, h, max_zoom, tile_size):
     count = 0
     for zoom in range(max_zoom + 1):
-        step = tile_size * (2 ** zoom)
+        step = tile_size * (2**zoom)
         count += (w // step) * (h // step)
     return count
 
@@ -73,10 +83,12 @@ def export(source, dest, tile_size=256):
     # create database schema
     c.execute('CREATE TABLE metadata (name text, value text)')
     c.execute(
-        'CREATE TABLE tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob)')
+        'CREATE TABLE tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob)'
+    )
     # indicies aren't necessary but for large databases with many zoom levels may increase performance
     c.execute(
-        'CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row)')
+        'CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row)'
+    )
     c.execute('CREATE UNIQUE INDEX name ON metadata (name)')
 
     # fill metadata table with some basic info
@@ -96,12 +108,251 @@ def export(source, dest, tile_size=256):
     conn.close()
 
 
+def meters_per_pixel(lat, zoom):
+    return 156543.03392 * cos(lat * pi / 180.) / pow(2, zoom)
+
+
+def clamp(x, minimum, maximum):
+    return max(minimum, min(x, maximum))
+
+
+def get_x(zoom, lon, tile_size):
+    """Get the x position on the map using this map source's projection
+    (0, 0) is located at the top left.
+    """
+    lon = clamp(lon, MIN_LONGITUDE, MAX_LONGITUDE)
+    return ((lon + 180.) / 360. * pow(2., zoom)) * tile_size
+
+
+def get_y(zoom, lat, tile_size):
+    """Get the y position on the map using this map source's projection
+    (0, 0) is located at the top left.
+    """
+    lat = clamp(-lat, MIN_LATITUDE, MAX_LATITUDE)
+    lat = lat * pi / 180.
+    return ((1.0 - log(tan(lat) + 1.0 / cos(lat)) / pi) / 2. *
+            pow(2., zoom)) * tile_size
+
+
+def get_lon(zoom, x, tile_size):
+    """Get the longitude to the x position in the map source's projection
+    """
+    dx = x / float(tile_size)
+    lon = dx / pow(2., zoom) * 360. - 180.
+    return clamp(lon, MIN_LONGITUDE, MAX_LONGITUDE)
+
+
+def get_lat(zoom, y, tile_size):
+    """Get the latitude to the y position in the map source's projection
+    """
+    dy = y / float(tile_size)
+    n = pi - 2 * pi * dy / pow(2., zoom)
+    lat = -180. / pi * atan(.5 * (exp(n) - exp(-n)))
+    return clamp(lat, MIN_LATITUDE, MAX_LATITUDE)
+
+
+def get_row_count(zoom):
+    """Get the number of tiles in a row at this zoom level
+    """
+    if zoom == 0:
+        return 1
+    return 2 << (zoom - 1)
+
+
+def get_col_count(zoom):
+    """Get the number of tiles in a col at this zoom level
+    """
+    if zoom == 0:
+        return 1
+    return 2 << (zoom - 1)
+
+
+def flip_y(y, z):
+    return 2 ** z - 1 - y
+
+
+def export_lnglat(source, dest, center, meterswidth, rotation, tilesdir, tile_size=256):
+    lng, lat = map(float, center.split(","))
+    print("Analyse: {}".format(source))
+    im = Image.open(source)
+    w, h = im.size
+    print("Size: {}x{}".format(w, h))
+    print("Current position: {},{}".format(lng, lat))
+    im_mpx = meterswidth / float(w)
+    print("Current meter per pixels: {}".format(im_mpx))
+
+    if rotation:
+        print("Rotation: {}".format(rotation))
+        im = im.rotate(rotation, resample=Image.BICUBIC, expand=True)
+        w, h = im.size
+        print("New size: {}x{}".format(w, h))
+
+    # search for the maximum zoom that would fit the current mpx
+    for zoom in range(32, -1, -1):
+        target_mpx = meters_per_pixel(lat, zoom)
+        if target_mpx > im_mpx:
+            break
+    target_zoom = zoom + 1
+    print("Closest accurate zoom is {}".format(target_zoom))
+
+    conn = sqlite3.connect(dest)
+    c = conn.cursor()
+
+    # create database schema
+    c.execute('CREATE TABLE metadata (name text, value text)')
+    c.execute(
+        'CREATE TABLE tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob)'
+    )
+    # indicies aren't necessary but for large databases with many zoom levels may increase performance
+    c.execute(
+        'CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row)'
+    )
+    c.execute('CREATE UNIQUE INDEX name ON metadata (name)')
+
+    # fill metadata table with some basic info
+    c.execute("INSERT INTO metadata VALUES ('name', ?)", [dest])
+    c.execute("INSERT INTO metadata VALUES ('type', 'baselayer')")
+    c.execute("INSERT INTO metadata VALUES ('version', '1.0')")
+    c.execute("INSERT INTO metadata VALUES ('description', '')")
+    c.execute("INSERT INTO metadata VALUES ('format', 'png')")
+
+    min_zoom = target_zoom
+    for zoom in range(target_zoom, -1, -1):
+        print("Process zoom {}".format(zoom))
+        target_mpx = meters_per_pixel(lat, zoom)
+        print("  - Target meter per pixels: {}".format(target_mpx))
+        zoom_ratio = im_mpx / target_mpx
+        tw = int(w * zoom_ratio)
+        th = int(h * zoom_ratio)
+        if min(tw, th) <= 1:
+            print("  - Stopped now, image less than 1 px")
+            min_zoom = zoom + 1
+            break
+        print("  - Image size: {}x{}".format(tw, th))
+
+        im2 = im.resize((tw, th), Image.BILINEAR)
+
+        cols = get_col_count(zoom)
+        rows = get_row_count(zoom)
+        print("  - Maximum number of cols/rows: {}x{}".format(cols, rows))
+        center_x = get_x(zoom, lng, tile_size=tile_size)
+        center_y = get_y(zoom, lat, tile_size=tile_size)
+        print("  - Center in pixels is: {}x{}".format(center_x, center_y))
+        x_min = int(center_x - (tw / 2))
+        y_min = int(center_y - (th / 2))
+        print("  - Minimum x/y: {}x{}".format(x_min, y_min))
+        x_max = x_min + tw
+        y_max = y_min + th
+        print("  - Maximum x/y: {}x{}".format(x_max, y_max))
+        tile_col_min = int(floor(x_min / float(tile_size)))
+        tile_row_min = int(floor(y_min / float(tile_size)))
+        tile_col_max = int(floor(x_max / float(tile_size)))
+        tile_row_max = int(floor(y_max / float(tile_size)))
+        tile_col_count = max(1, tile_col_max - tile_col_min)
+        tile_row_count = max(1, tile_row_max - tile_row_min)
+        print("  - Tile range: {}x{} to {}x{}".format(
+            tile_col_min, tile_row_min, tile_col_max, tile_row_max))
+        print("  - Cols count: {}".format(tile_col_count))
+        print("  - Rows count: {}".format(tile_row_count))
+
+        count = tile_col_count * tile_row_count
+        index = 0
+        font = ImageFont.truetype("/usr/share/fonts/TTF/Arimo-Regular.ttf", 14)
+        for tile_col in range(tile_col_min, tile_col_max + 1):
+            for tile_row in range(tile_row_min, tile_row_max + 1):
+                index += 1
+                print("  - {}/{}\tcol:{} row:{}".format(index, count, tile_col,
+                                                        tile_row))
+
+                tile_x = tile_col * tile_size
+                tile_y = tile_row * tile_size
+
+                crop_x = max(0, tile_x - x_min)
+                crop_y = max(0, tile_y - y_min)
+                crop_x2 = min(tile_x + tile_size, tile_x + tile_size - x_min)
+                crop_y2 = min(tile_y + tile_size, tile_y + tile_size - y_min)
+                print("  - Crop {}x{} to {}x{}".format(crop_x, crop_y, crop_x2,
+                                                       crop_y2))
+                crop_w = crop_x2 - crop_x
+                crop_h = crop_y2 - crop_y
+                print("  - Crop size: {}x{}".format(crop_w, crop_h))
+
+                im3 = Image.new("RGBA", (tile_size, tile_size), (0, 0, 0, 0))
+                if DEBUG_TILES:
+                    draw = ImageDraw.Draw(im3)
+                    draw.rectangle(
+                        (0, 0, tile_size, tile_size),
+                        outline="#0000ffff",
+                        fill="#ff000066")
+                    draw.text(
+                        (10, 10),
+                        "ZOOM {} - {}x{}".format(zoom, tile_col, tile_row),
+                        font=font,
+                        fill=(0, 0, 0, 255))
+                imc = im2.crop((crop_x, th - crop_y2, crop_x2, th - crop_y))
+
+                box_x = max(0, x_min - tile_x)
+                box_y = max(0, y_min - tile_y)
+                box_y = 0
+                print("  - Box: {}x{}".format(box_x, box_y))
+                im3.paste(imc, box=(box_x, box_y), mask=imc)
+                sio = StringIO()
+                im3.save(sio, format="PNG")
+                c.execute("INSERT INTO tiles VALUES (?, ?, ?, ?)",
+                          [zoom, tile_col, tile_row, buffer(sio.getvalue())])
+                conn.commit()
+
+                if tilesdir is not None:
+                    filename = join(tilesdir, str(zoom), str(tile_col), "{}.png".format(flip_y(tile_row, zoom)))
+                    directory = dirname(filename)
+                    if not exists(directory):
+                        makedirs(directory)
+                    im3.save(filename, format="PNG")
+
+    # save metadata
+    c.execute("INSERT INTO metadata VALUES ('minzoom', ?)", [min_zoom])
+    c.execute("INSERT INTO metadata VALUES ('maxzoom', ?)", [target_zoom])
+    c.execute("INSERT INTO metadata VALUES ('center', ?)",
+              ["{},{},{}".format(lng, lat, target_zoom - 1)])
+    conn.commit()
+    conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert image to mbtiles")
+    parser.add_argument(
+        "--center",
+        default=None,
+        help="Longitude/Latitude center of the image (lng,lat format)")
+    parser.add_argument(
+        "--meterswidth", type=float, help="Width size in meters")
+    parser.add_argument(
+        "--rotation",
+        type=float,
+        default=0.,
+        help="Angle of the image (rotation will be applied on the image)")
+    parser.add_argument(
+        "--tilesdir", type=str, help="Directory where to store tiles")
     parser.add_argument("image", help="Source image")
     parser.add_argument("mbtiles", help="Destination mbtiles")
     args = parser.parse_args()
-    export(args.image, args.mbtiles)
+
+    if (args.center or args.meterswidth):
+        if not args.center:
+            print("ERROR: meterswidth require center option too")
+            sys.exit(1)
+        if not args.meterswidth:
+            print("ERROR: center option requires meterswidth option too")
+            sys.exit(1)
+        export_lnglat(
+            args.image,
+            args.mbtiles,
+            center=args.center,
+            meterswidth=args.meterswidth,
+            rotation=args.rotation,
+            tilesdir=args.tilesdir)
+    else:
+        export(args.image, args.mbtiles)
 
 
 if __name__ == "__main__":
