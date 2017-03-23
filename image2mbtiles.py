@@ -283,7 +283,8 @@ def export_lnglat(source,
 
         count = tile_col_count * tile_row_count
         index = 0
-        font = ImageFont.truetype("/usr/share/fonts/TTF/Arimo-Regular.ttf", 14)
+        if DEBUG_TILES:
+            font = ImageFont.truetype("/usr/share/fonts/TTF/Arimo-Regular.ttf", 14)
         for tile_col in range(tile_col_min, tile_col_max + 1):
             for tile_row in range(tile_row_min, tile_row_max + 1):
                 index += 1
