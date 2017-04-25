@@ -14,6 +14,7 @@ MAX_LATITUDE = 90.
 MIN_LONGITUDE = -180.
 MAX_LONGITUDE = 180.
 DEBUG_TILES = False
+RESAMPLE = Image.BOX
 
 
 def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles,
@@ -47,7 +48,7 @@ def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles,
                 im3 = Image.new("RGBA", (step, step), (0, 0, 0, 0))
                 im3.paste(im2, (0, 0, step, step))
                 im2 = im3
-            im2 = im2.resize((tile_size, tile_size), Image.BILINEAR)
+            im2 = im2.resize((tile_size, tile_size), RESAMPLE)
             #im2.save("output_{}_{}_{}.png".format(max_zoom - zoom, ix, iy))
             sio = StringIO()
             im2.save(sio, format="PNG")
@@ -98,7 +99,8 @@ def export(source, dest, tilesdir, tile_size=256):
     c.execute(
         'CREATE TABLE tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob)'
     )
-    # indicies aren't necessary but for large databases with many zoom levels may increase performance
+    # indicies aren't necessary but for large databases with many zoom levels
+    # may increase performance
     c.execute(
         'CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row)'
     )
@@ -197,7 +199,8 @@ def export_lnglat(source,
                   meterswidth,
                   rotation,
                   tilesdir,
-                  tile_size=256):
+                  tile_size=256,
+                  px=False):
     lng, lat = map(float, center.split(","))
     print("Analyse: {}".format(source))
     im = Image.open(source)
@@ -220,6 +223,11 @@ def export_lnglat(source,
             break
     target_zoom = zoom + 1
     print("Closest accurate zoom is {}".format(target_zoom))
+    if px:
+        print("PX mode: activated, adjust image width from the current zoom")
+        im_mpx = meters_per_pixel(lat, target_zoom)
+        meterswidth = w * im_mpx
+        print("PX mode: calculated width: {} meters".format(meterswidth))
 
     conn = sqlite3.connect(dest)
     c = conn.cursor()
@@ -229,7 +237,8 @@ def export_lnglat(source,
     c.execute(
         'CREATE TABLE tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob)'
     )
-    # indicies aren't necessary but for large databases with many zoom levels may increase performance
+    # indicies aren't necessary but for large databases with many zoom levels
+    # may increase performance
     c.execute(
         'CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row)'
     )
@@ -256,7 +265,7 @@ def export_lnglat(source,
             break
         print("  - Image size: {}x{}".format(tw, th))
 
-        im2 = im.resize((tw, th), Image.BILINEAR)
+        im2 = im.resize((tw, th), RESAMPLE)
 
         cols = get_col_count(zoom)
         rows = get_row_count(zoom)
@@ -284,7 +293,8 @@ def export_lnglat(source,
         count = tile_col_count * tile_row_count
         index = 0
         if DEBUG_TILES:
-            font = ImageFont.truetype("/usr/share/fonts/TTF/Arimo-Regular.ttf", 14)
+            font = ImageFont.truetype(
+                "/usr/share/fonts/TTF/Arimo-Regular.ttf", 14)
         for tile_col in range(tile_col_min, tile_col_max + 1):
             for tile_row in range(tile_row_min, tile_row_max + 1):
                 index += 1
@@ -363,6 +373,8 @@ def main():
         help="Angle of the image (rotation will be applied on the image)")
     parser.add_argument(
         "--tilesdir", type=str, help="Directory where to store tiles")
+    parser.add_argument("--px", action="store_true",
+                        help="After finding the zoom level, don't resize the initial image (pixel perfect mode)")
     parser.add_argument("image", help="Source image")
     parser.add_argument("mbtiles", help="Destination mbtiles")
     args = parser.parse_args()
@@ -380,7 +392,8 @@ def main():
             center=args.center,
             meterswidth=args.meterswidth,
             rotation=args.rotation,
-            tilesdir=args.tilesdir)
+            tilesdir=args.tilesdir,
+            px=args.px)
     else:
         export(args.image, args.mbtiles, tilesdir=args.tilesdir)
 
