@@ -1,0 +1,21 @@
+version: '2'
+
+services:
+
+  image2mbtiles_dependencies:
+    container_name: image2mbtiles_dependencies
+    image: baptwaels/image2mbtiles_dependencies
+    build: ./dependencies
+
+  image2mbtiles:
+    container_name: image2mbtiles
+    image: baptwaels/image2mbtiles
+    build: .
+    volumes:
+      - .:/usr/src/
+    tty: true
+
+volumes:
+  image2mbtiles_data:
+      driver: local
+      
