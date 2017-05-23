@@ -8,6 +8,7 @@ from StringIO import StringIO
 from os.path import join, dirname, exists
 from os import makedirs
 import sqlite3
+import sh
 
 MIN_LATITUDE = -90.
 MAX_LATITUDE = 90.
@@ -152,8 +153,8 @@ def get_y(zoom, lat, tile_size):
     """
     lat = clamp(-lat, MIN_LATITUDE, MAX_LATITUDE)
     lat = lat * pi / 180.
-    return ((1.0 - log(tan(lat) + 1.0 / cos(lat)) / pi) / 2. *
-            pow(2., zoom)) * tile_size
+    return ((1.0 - log(tan(lat) + 1.0 / cos(lat)) / pi) / 2. * pow(2., zoom)
+            ) * tile_size
 
 
 def get_lon(zoom, x, tile_size):
@@ -293,13 +294,13 @@ def export_lnglat(source,
         count = tile_col_count * tile_row_count
         index = 0
         if DEBUG_TILES:
-            font = ImageFont.truetype(
-                "/usr/share/fonts/TTF/Arimo-Regular.ttf", 14)
+            font = ImageFont.truetype("/usr/share/fonts/TTF/Arimo-Regular.ttf",
+                                      14)
         for tile_col in range(tile_col_min, tile_col_max + 1):
             for tile_row in range(tile_row_min, tile_row_max + 1):
                 index += 1
-                print("  - {}/{}\tcol:{} row:{}".format(index, count, tile_col,
-                                                        tile_row))
+                print("  - {}/{}\tcol:{} row:{}".format(
+                    index, count, tile_col, tile_row))
 
                 tile_x = tile_col * tile_size
                 tile_y = tile_row * tile_size
@@ -357,6 +358,158 @@ def export_lnglat(source,
     conn.commit()
     conn.close()
 
+def export_lnglat_svg(source,
+                      dest,
+                      center,
+                      meterswidth,
+                      tilesdir,
+                      minzoom,
+                      maxzoom,
+                      background_color,
+                      tile_size=256):
+    lng, lat = map(float, center.split(","))
+    print("Analyse: {}".format(source))
+    w = float(sh.inkscape("-f", source, "-W"))
+    h = float(sh.inkscape("-f", source, "-H"))
+    print("Size: {}x{}".format(w, h))
+    print("Center: {},{}".format(lng, lat))
+    im_mpx = meterswidth / float(w)
+
+    conn = sqlite3.connect(dest)
+    c = conn.cursor()
+
+    # create database schema
+    c.execute('CREATE TABLE metadata (name text, value text)')
+    c.execute(
+        'CREATE TABLE tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob)'
+    )
+    # indicies aren't necessary but for large databases with many zoom levels
+    # may increase performance
+    c.execute(
+        'CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row)'
+    )
+    c.execute('CREATE UNIQUE INDEX name ON metadata (name)')
+
+    # fill metadata table with some basic info
+    c.execute("INSERT INTO metadata VALUES ('name', ?)", [dest])
+    c.execute("INSERT INTO metadata VALUES ('type', 'baselayer')")
+    c.execute("INSERT INTO metadata VALUES ('version', '1.0')")
+    c.execute("INSERT INTO metadata VALUES ('description', '')")
+    c.execute("INSERT INTO metadata VALUES ('format', 'png')")
+
+    import subprocess
+    process = subprocess.Popen([
+        "inkscape", "--shell"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    while True:
+        ret = process.stdout.read(1)
+        if ret != "\n":
+            continue
+        ret = process.stdout.read(1)
+        if ret != ">":
+            continue
+        break
+
+    for zoom in range(minzoom, maxzoom + 1):
+        print("Process zoom {}".format(zoom))
+
+        target_mpx = meters_per_pixel(lat, zoom)
+
+        print("  - Target meter per pixels: {}".format(target_mpx))
+        zoom_ratio = im_mpx / target_mpx
+        tw = w * zoom_ratio
+        th = h * zoom_ratio
+        print("  - Image size: {}x{}".format(tw, th))
+
+        cols = get_col_count(zoom)
+        rows = get_row_count(zoom)
+        print("  - Maximum number of cols/rows: {}x{}".format(cols, rows))
+        center_x = get_x(zoom, lng, tile_size=tile_size)
+        center_y = get_y(zoom, lat, tile_size=tile_size)
+        print("  - Center in pixels is: {}x{}".format(center_x, center_y))
+        x_min = center_x - (tw / 2)
+        y_min = center_y - (th / 2)
+        print("  - Minimum x/y: {}x{}".format(x_min, y_min))
+        x_max = x_min + tw
+        y_max = y_min + th
+        print("  - Maximum x/y: {}x{}".format(x_max, y_max))
+        tile_col_min = int(floor(x_min / float(tile_size)))
+        tile_row_min = int(floor(y_min / float(tile_size)))
+        tile_col_max = int(floor(x_max / float(tile_size)))
+        tile_row_max = int(floor(y_max / float(tile_size)))
+        tile_col_count = max(1, tile_col_max - tile_col_min)
+        tile_row_count = max(1, tile_row_max - tile_row_min)
+        print("  - Tile range: {}x{} to {}x{}".format(
+            tile_col_min, tile_row_min, tile_col_max, tile_row_max))
+        print("  - Cols count: {}".format(tile_col_count))
+        print("  - Rows count: {}".format(tile_row_count))
+
+        count = (tile_col_count + 1) * (tile_row_count + 1)
+        index = 0
+        for tile_col in range(tile_col_min, tile_col_max + 1):
+            for tile_row in range(tile_row_min, tile_row_max + 1):
+                index += 1
+                print("  - {}/{}\tcol:{} row:{}".format(
+                    index, count, tile_col, tile_row))
+
+                tile_x = tile_col * tile_size
+                tile_y = tile_row * tile_size
+
+                crop_x = tile_x - x_min
+                crop_y = tile_y - y_min
+                crop_x2 = tile_x + tile_size - x_min
+                crop_y2 = tile_y + tile_size - y_min
+                print("  - Crop {}x{} to {}x{}".format(crop_x, crop_y, crop_x2,
+                                                       crop_y2))
+                filename = join(tilesdir,
+                                str(zoom),
+                                str(tile_col),
+                                "{}.png".format(flip_y(tile_row, zoom)))
+                directory = dirname(filename)
+                if not exists(directory):
+                    makedirs(directory)
+
+                ratio = 1 / zoom_ratio
+                crop_x *= ratio
+                crop_y *= ratio
+                crop_x2 *= ratio
+                crop_y2 *= ratio
+
+                export_area = "{}:{}:{}:{}".format(
+                    crop_x, crop_y, crop_x2, crop_y2)
+
+                cmd = "-f '{}' -e {} -a {} -w {} -h {} -b '{}'\n".format(
+                    source, filename, export_area, tile_size, tile_size, background_color
+                )
+                process.stdin.write(cmd)
+                while True:
+                    ret = process.stdout.read(1)
+                    if ret != "\n":
+                        continue
+                    ret = process.stdout.read(1)
+                    if ret != ">":
+                        continue
+                    break
+                # sh.inkscape("-f", source, "-e", filename, "-a", export_area,
+                #             "-w", tile_size, "-h", tile_size,
+                #             "-b", "#030303")
+
+                with open(filename, "rb") as fd:
+                    data = buffer(fd.read())
+
+                c.execute("INSERT INTO tiles VALUES (?, ?, ?, ?)",
+                          [zoom, tile_col, tile_row, data])
+                conn.commit()
+
+    # save metadata
+    c.execute("INSERT INTO metadata VALUES ('minzoom', ?)", [minzoom])
+    c.execute("INSERT INTO metadata VALUES ('maxzoom', ?)", [maxzoom])
+    c.execute("INSERT INTO metadata VALUES ('center', ?)",
+              ["{},{},{}".format(lng, lat, maxzoom - 1)])
+    conn.commit()
+    conn.close()
+
+    process.terminate()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Convert image to mbtiles")
@@ -373,13 +526,37 @@ def main():
         help="Angle of the image (rotation will be applied on the image)")
     parser.add_argument(
         "--tilesdir", type=str, help="Directory where to store tiles")
-    parser.add_argument("--px", action="store_true",
-                        help="After finding the zoom level, don't resize the initial image (pixel perfect mode)")
+    parser.add_argument(
+        "--px",
+        action="store_true",
+        help=
+        "After finding the zoom level, don't resize the initial image (pixel perfect mode)"
+    )
+    parser.add_argument(
+        "--minzoom", type=int, help="Minimum zoom to generate (svg only)")
+    parser.add_argument(
+        "--maxzoom", type=int, help="Maximum zoom to generate (svg only)")
+    parser.add_argument(
+        "--background", type=str, default="#030303", help="Background color of the map (svg only)")
     parser.add_argument("image", help="Source image")
     parser.add_argument("mbtiles", help="Destination mbtiles")
     args = parser.parse_args()
 
-    if (args.center or args.meterswidth):
+    if args.image.endswith(".svg"):
+        if not args.maxzoom or not args.minzoom:
+            print("ERROR: an SVG source require a minzoom and maxzoom")
+            sys.exit(1)
+        export_lnglat_svg(
+            args.image,
+            args.mbtiles,
+            center=args.center,
+            meterswidth=args.meterswidth,
+            tilesdir=args.tilesdir,
+            minzoom=args.minzoom,
+            maxzoom=args.maxzoom,
+            background_color=args.background)
+
+    elif (args.center or args.meterswidth):
         if not args.center:
             print("ERROR: meterswidth require center option too")
             sys.exit(1)
