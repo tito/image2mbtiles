@@ -94,6 +94,10 @@ def export(source, dest, tilesdir, tile_size=256):
     conn = sqlite3.connect(dest)
     c = conn.cursor()
 
+    # delete db table if exists, prevent "sqlite3.OperationalError: table metadata already exists"
+    c.execute('DROP TABLE IF EXISTS metadata')
+    c.execute('DROP TABLE IF EXISTS tiles')
+
     # create database schema
     c.execute('CREATE TABLE metadata (name text, value text)')
     c.execute(
@@ -231,6 +235,10 @@ def export_lnglat(source,
 
     conn = sqlite3.connect(dest)
     c = conn.cursor()
+
+    # delete db table if exists, prevent "sqlite3.OperationalError: table metadata already exists"
+    c.execute('DROP TABLE IF EXISTS metadata')
+    c.execute('DROP TABLE IF EXISTS tiles')
 
     # create database schema
     c.execute('CREATE TABLE metadata (name text, value text)')
