@@ -6,7 +6,8 @@ from PIL import Image, ImageDraw, ImageFont
 from math import log, ceil, cos, pi, tan, atan, exp, floor
 from StringIO import StringIO
 from os.path import join, dirname, exists
-from os import makedirs
+from os import makedirs, remove, listdir
+import re
 import sqlite3
 import sh
 
@@ -17,6 +18,7 @@ MAX_LONGITUDE = 180.
 DEBUG_TILES = False
 RESAMPLE = Image.BOX
 
+TMP_PNG_NAME = "gs_tmp.file-merged.png"
 
 def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles,
                  tilesdir):
@@ -511,6 +513,33 @@ def export_lnglat_svg(source,
     process.terminate()
 
 
+def convert_pdf_to_png(source):
+    print("Convert: {} to PNG (one per page)".format(source))
+
+    sh.gs(
+        "-sDEVICE=pngalpha",
+        "-o",
+        "gs_tmp.file-%03d.png",
+        "-dTextAlphaBits=4",
+        "-r600",
+        source
+    )
+
+    print("Merge: All converted PNG to a single one")
+
+    # Use +append for horizontal and -append for vertical
+    sh.convert(
+        "-append",
+        "*.png",
+        TMP_PNG_NAME
+    )
+
+
+def clean_tmp_png():
+    print("Clean: Removing temporary files")
+    [ remove(f) for f in listdir(".") if re.match(r'^gs_tmp.file-.*.png$', f) ]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert image to mbtiles")
     parser.add_argument(
@@ -555,6 +584,15 @@ def main():
             minzoom=args.minzoom,
             maxzoom=args.maxzoom,
             background_color=args.background)
+
+    elif args.image.endswith(".pdf"):
+        convert_pdf_to_png(
+            args.image
+        )
+
+        sys.argv[sys.argv.index(args.image)] = TMP_PNG_NAME
+        main()
+        clean_tmp_png()
 
     elif (args.center or args.meterswidth):
         if not args.center:

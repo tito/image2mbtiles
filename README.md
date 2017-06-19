@@ -8,6 +8,8 @@ mobiles for example.
 ## Requirements
 
 - Pillow >= 2.8
+- ghostscript installed on your machine (gs command available)
+- imagemagick installed on your machine (convert command available)
 
 ## Usage
 
