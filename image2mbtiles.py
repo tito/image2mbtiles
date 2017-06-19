@@ -81,7 +81,7 @@ def _estimate_tiles(w, h, max_zoom, tile_size):
 
 def export(source, dest, tilesdir, tile_size=256):
     print("Analyse: {}".format(source))
-    im = Image.open(source)
+    im = Image.open(source).convert("RGBA")
     w, h = im.size
     print("Size: {}x{}".format(w, h))
     side = max(w, h)
@@ -94,6 +94,10 @@ def export(source, dest, tilesdir, tile_size=256):
 
     conn = sqlite3.connect(dest)
     c = conn.cursor()
+
+    # delete db table if exists, prevent "sqlite3.OperationalError: table metadata already exists"
+    c.execute('DROP TABLE IF EXISTS metadata')
+    c.execute('DROP TABLE IF EXISTS tiles')
 
     # create database schema
     c.execute('CREATE TABLE metadata (name text, value text)')
@@ -204,7 +208,7 @@ def export_lnglat(source,
                   px=False):
     lng, lat = map(float, center.split(","))
     print("Analyse: {}".format(source))
-    im = Image.open(source)
+    im = Image.open(source).convert("RGBA")
     w, h = im.size
     print("Size: {}x{}".format(w, h))
     print("Current position: {},{}".format(lng, lat))
@@ -232,6 +236,10 @@ def export_lnglat(source,
 
     conn = sqlite3.connect(dest)
     c = conn.cursor()
+
+    # delete db table if exists, prevent "sqlite3.OperationalError: table metadata already exists"
+    c.execute('DROP TABLE IF EXISTS metadata')
+    c.execute('DROP TABLE IF EXISTS tiles')
 
     # create database schema
     c.execute('CREATE TABLE metadata (name text, value text)')

@@ -14,7 +14,7 @@ mobiles for example.
 Syntax:
 
 	$ python image2mbtiles.py source.png output.mbtiles
-	
+
 For example, here is the output of a test:
 
 	$ python image2mbtiles.py 001_Baratta_Vue Naples_BnF.tif output.mbtiles
@@ -69,3 +69,11 @@ You can also manually convert on any other computer:
 Or if needed, you can install requirements and then convert:
 
 	$ fab -H root@1.2.3.4 provision convert:~/Downloads/IMAG0412.png
+
+
+### Docker
+
+You can run the script inside a docker container.
+
+	$ docker build -t image2mbtiles .
+	$ docker run -v $(pwd):/usr/src/data image2mbtiles source.png output.mbtiles
