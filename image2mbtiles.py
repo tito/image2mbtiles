@@ -4,11 +4,11 @@ import argparse
 import sys
 from PIL import Image, ImageDraw, ImageFont
 from math import log, ceil, cos, pi, tan, atan, exp, floor
-from StringIO import StringIO
+from io import BytesIO
 from os.path import join, dirname, exists
 from os import makedirs
 import sqlite3
-import sh
+
 
 MIN_LATITUDE = -90.
 MAX_LATITUDE = 90.
@@ -51,10 +51,10 @@ def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles,
                 im2 = im3
             im2 = im2.resize((tile_size, tile_size), RESAMPLE)
             #im2.save("output_{}_{}_{}.png".format(max_zoom - zoom, ix, iy))
-            sio = StringIO()
+            sio = BytesIO()
             im2.save(sio, format="PNG")
             c.execute("INSERT INTO tiles VALUES (?, ?, ?, ?)",
-                      [max_zoom - zoom, ix, iy, buffer(sio.getvalue())])
+                      [max_zoom - zoom, ix, iy, sio.getvalue()])
             counter += 1
 
             if tilesdir is not None:
@@ -204,7 +204,7 @@ def export_lnglat(source,
                   px=False):
     lng, lat = map(float, center.split(","))
     print("Analyse: {}".format(source))
-    im = Image.open(source)
+    im = Image.open(source).convert("RGBA")
     w, h = im.size
     print("Size: {}x{}".format(w, h))
     print("Current position: {},{}".format(lng, lat))
@@ -334,7 +334,7 @@ def export_lnglat(source,
                 box_y = 0
                 print("  - Box: {}x{}".format(box_x, box_y))
                 im3.paste(imc, box=(box_x, box_y), mask=imc)
-                sio = StringIO()
+                sio = BytesIO()
                 im3.save(sio, format="PNG")
                 c.execute("INSERT INTO tiles VALUES (?, ?, ?, ?)",
                           [zoom, tile_col, tile_row, buffer(sio.getvalue())])

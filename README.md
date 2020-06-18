@@ -7,14 +7,21 @@ mobiles for example.
 
 ## Requirements
 
-- Pillow >= 2.8
+- Python 3
+- Pillow >= 7.1.2
+
+## Installation
+
+```
+pip install -r requirements.txt
+```
 
 ## Usage
 
 Syntax:
 
 	$ python image2mbtiles.py source.png output.mbtiles
-	
+
 For example, here is the output of a test:
 
 	$ python image2mbtiles.py 001_Baratta_Vue Naples_BnF.tif output.mbtiles
