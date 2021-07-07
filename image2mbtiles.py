@@ -81,7 +81,7 @@ def _estimate_tiles(w, h, max_zoom, tile_size):
 
 def export(source, dest, tilesdir, tile_size=256):
     print("Analyse: {}".format(source))
-    im = Image.open(source)
+    im = Image.open(source).convert("RGBA")
     w, h = im.size
     print("Size: {}x{}".format(w, h))
     side = max(w, h)
