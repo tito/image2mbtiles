@@ -15,7 +15,7 @@ MAX_LATITUDE = 90.
 MIN_LONGITUDE = -180.
 MAX_LONGITUDE = 180.
 DEBUG_TILES = False
-RESAMPLE = Image.BOX
+RESAMPLE = Image.BICUBIC
 
 
 def export_level(c, im, max_zoom, zoom, tile_size, counter, max_tiles,
@@ -333,11 +333,15 @@ def export_lnglat(source,
                 box_y = max(0, y_min - tile_y)
                 box_y = 0
                 print("  - Box: {}x{}".format(box_x, box_y))
+
+                # fill with white !
+                im3.paste((255, 255, 255), (0, 0, im3.size[0], im3.size[1]))
+
                 im3.paste(imc, box=(box_x, box_y), mask=imc)
                 sio = BytesIO()
                 im3.save(sio, format="PNG")
                 c.execute("INSERT INTO tiles VALUES (?, ?, ?, ?)",
-                          [zoom, tile_col, tile_row, buffer(sio.getvalue())])
+                          [zoom, tile_col, tile_row, sio.getvalue()])
                 conn.commit()
 
                 if tilesdir is not None:
@@ -494,7 +498,7 @@ def export_lnglat_svg(source,
                 #             "-b", "#030303")
 
                 with open(filename, "rb") as fd:
-                    data = buffer(fd.read())
+                    data = fd.read()
 
                 c.execute("INSERT INTO tiles VALUES (?, ?, ?, ?)",
                           [zoom, tile_col, tile_row, data])
